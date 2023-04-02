@@ -176,34 +176,35 @@ class SQLCompleter(object):
     def _get_choices(self, current, stmt):
         tk = stmt.tokens[-1]
         if isinstance(tk, Identifier):
-            yield from self._get_possible_objs(current)
+            yield from self.get_possible_identifiers(current)
 
         else:
             for word in itertools.chain(self.actions, self.objects, self.functions, self.keywords):
                 if word.lower().startswith(current):
                     yield word, -len(current)
+                    
+    def get_possible_identifiers(self, current):
+        seen = set()
+        for v, pos in self._get_possible_identifiers(current):
+            if v not in seen:
+                yield v, pos
+                seen.add(v)
 
-    def _get_possible_objs(self, current):
+    def _get_possible_identifiers(self, current):
         rel_cnt = current.count('.')
+        uqn = self.unquote_name
 
         if rel_cnt == 0:
             for val in self._yields_all(self.identifiers, current):
                 yield val, -len(current)
 
         elif rel_cnt == 1:
-            name, sub = current.split('.')
-            name = self.unquote_name(name)
-            sub = self.unquote_name(sub)
-            print(f'name is: "%s", and sub is "%s"' % (name, sub))
-            print(self.identifiers)
+            name, sub = [uqn(x) for x in current.split('.')]
             for val in self._yields_all(self.identifiers, sub, key=name):
                 yield val, -len(sub)
 
         elif rel_cnt == 2 and self.db_support:
-            db, schema, name = current.split('.')
-            db = self.unquote_name(db)
-            schema = self.unquote_name(schema)
-            name = self.unquote_name(name)
+            db, schema, name = [uqn(x) for x in current.split('.')]
             for val in self._yields_all(self.identifiers.get(db, {}), name, key=schema):
                 yield val, -len(name)
 
@@ -251,7 +252,72 @@ class MySQLCompleter(SQLCompleter):
         return name.strip('`')
 
     def fetch_schema(self, db=None):
-        return ['mysql', 'test', 'dbus', 'django', 'nicedb']
+        if self.db is None:
+            return ['mysql', 'test', 'django', 'skycli']
+        
+        query = """select 
+                        schema_name 
+                    from 
+                        information_schema.schemata 
+                        """
+        with self.db.cursor() as cur:
+            cur.execute(query)
+            return [s for s, in cur]
 
     def fetch_tables(self, schema=None, db=None):
-        return [f'table_{n}' for n in range(1, 10)]
+        if self.db is None:
+            return [f'table_{n}' for n in range(1, 10)]
+        
+        if not schema:
+            query = 'show tables'
+        else:    
+            query = """select 
+                            table_name from information_schema.tables 
+                        where 
+                            table_schema = %s""" % schema
+            
+        with self.db.cursor() as cur:
+            cur.execute(query)
+            return [t for t, in cur]
+        
+    def fetch_columns(self, table, schema=None, db=None):
+        if self.db is None:
+            return 
+        
+        if schema is not None:
+            extra = " and c.table_schema = '%s'" % schema
+        else:
+            extra = ''
+        
+        query = """select 
+                        c.column_name 
+                   from 
+                        information_schema.columns c 
+                   where 
+                        c.table_name = %s %s""" % (table, extra)
+        
+        with self.db.cursor() as cur:
+            cur.execute(query)
+            return [c for c, in cur]
+        
+    def fetch_indexes(self, table, schema=None, db=None):
+        if self.db is None:
+            return 
+
+        if schema is not None:
+            extra = " and c.table_schema = '%s'" % schema
+        else:
+            extra = ''
+
+        
+        query = """select 
+                        index_name
+                    from 
+                        information_schema.statistics
+                    where 
+                        table_name = %s %s""" % (table, extra)
+        
+        with self.db.cursor() as cur:
+            cur.execute(query)
+            return [i for i, in cur]
+        
