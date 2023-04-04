@@ -1,2 +1,2 @@
-# skycli
+# skywalker
 Client for all databases.
